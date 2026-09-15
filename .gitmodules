@@ -1,3 +1,6 @@
 [submodule "source-snapshots/balance-bot"]
 	path = source-snapshots/balance-bot
 	url = https://github.com/RandoSY/balance-bot.git
+[submodule "source-snapshots/rekabit-testdemo-program"]
+	path = source-snapshots/rekabit-testdemo-program
+	url = https://github.com/RandoSY/rekabit-testdemo-program.git
