@@ -1,0 +1,3 @@
+[submodule "source-snapshots/balance-bot"]
+	path = source-snapshots/balance-bot
+	url = https://github.com/RandoSY/balance-bot.git
