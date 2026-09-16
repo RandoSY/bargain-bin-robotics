@@ -1,0 +1,184 @@
+module 'MURL Core' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+choices murl_profileMenu 'generic-pico-reference' simulator xrp 'cutebot-pro'
+description 'MicroBlocks Universal Robotics Layer (MURL) Core v0.1.0.
+Public identity, initialization, state, error, profile, and capability contract.
+MURL is an independent Robot EDU project and is not an official MicroBlocks specification.
+SPDX-License-Identifier: MPL-2.0'
+variables _murl__apiVersion _murl__profileSelected _murl__profileID _murl__profileVersion _murl__profileQualification _murl__robotName _murl__boardFamily _murl__driveGeometry _murl__capabilities _murl__ready _murl__state _murl__statusCode _murl__lastError _murl__motionActive _murl__motionKind _murl__motionProgress _murl__motionCancelled _murl__estopLatched _murl__faultLatched _murl__commandLeftEffort _murl__commandRightEffort _murl__measuredLeftSpeed _murl__measuredRightSpeed _murl__wheelDiameterMM _murl__wheelTrackMM _murl__encoderCountsPerRev _murl__motorLeftPolarity _murl__motorRightPolarity _murl__encoderLeftPolarity _murl__encoderRightPolarity _murl__profileMaxSpeed _murl__profileMaxAccel _murl__profileDefaultWatchdog _murl__speedLimit _murl__accelLimit _murl__watchdogInterval _murl__watchdogLastFeed _murl__watchdogArmed _murl__telemetryInterval _murl__lastMotionRequested _murl__lastMotionMeasured _murl__lastMotionError _murl__lastMotionDuration
+
+  spec ' ' 'murl_use_profile' 'use robot profile _' 'menu.murl_profileMenu' 'generic-pico-reference'
+  spec ' ' 'murl_initialize' 'initialize robot'
+  spec 'r' 'murl_ready' 'robot ready?'
+  spec 'r' 'murl_robot_name' 'robot name'
+  spec 'r' 'murl_profile_version' 'robot profile version'
+  spec 'r' 'murl_api_version' 'MURL API version'
+  spec 'r' 'murl_profile_qualification' 'robot profile qualification'
+  spec 'r' 'murl_has_capability' 'robot has capability _ ?' 'str' 'drive.effort'
+  spec 'r' 'murl_status_code' 'robot status code'
+  spec 'r' 'murl_last_error' 'robot last error'
+  space
+  advanced
+  spec ' ' '_murl_clear_error' '_murl clear error'
+  spec ' ' '_murl_error' '_murl error code _ message _' 'num str' 99 'internal error'
+  spec ' ' '_murl_motion_values_reset' '_murl reset motion values'
+  spec 'r' '_murl_require_capability' '_murl require capability _' 'str' 'drive.effort'
+  spec 'r' '_murl_require_ready' '_murl require ready'
+  spec ' ' '_murl_reset_runtime' '_murl reset runtime'
+  spec ' ' '_murl_set_state' '_murl set state _' 'str' 'IDLE'
+
+to '_murl_clear_error' {
+  _murl__statusCode = 0
+  _murl__lastError = ''
+}
+
+to '_murl_error' code message {
+  _murl__statusCode = code
+  _murl__lastError = message
+}
+
+to '_murl_motion_values_reset' {
+  _murl__motionActive = (booleanConstant false)
+  _murl__motionKind = ''
+  _murl__motionProgress = -1
+  _murl__motionCancelled = (booleanConstant false)
+  _murl__commandLeftEffort = 0
+  _murl__commandRightEffort = 0
+}
+
+to '_murl_require_capability' identifier {
+  if (not ('_murl_require_ready')) {return (booleanConstant false)}
+  if (not (murl_has_capability identifier)) {
+    '_murl_error' 10 ('[data:join]' 'capability unavailable: ' identifier)
+    return (booleanConstant false)
+  }
+  return (booleanConstant true)
+}
+
+to '_murl_require_ready' {
+  if (not _murl__ready) {
+    '_murl_error' 1 'robot is not initialized'
+    return (booleanConstant false)
+  }
+  if _murl__estopLatched {
+    '_murl_error' 50 'emergency stop is latched'
+    return (booleanConstant false)
+  }
+  if _murl__faultLatched {
+    '_murl_error' 2 'robot fault must be cleared'
+    return (booleanConstant false)
+  }
+  return (booleanConstant true)
+}
+
+to '_murl_reset_runtime' {
+  _murl__apiVersion = '0.1.0'
+  _murl__ready = (booleanConstant false)
+  _murl__state = 'UNINITIALIZED'
+  _murl__estopLatched = (booleanConstant false)
+  _murl__faultLatched = (booleanConstant false)
+  _murl__statusCode = 0
+  _murl__lastError = ''
+  _murl__speedLimit = 0
+  _murl__accelLimit = 0
+  _murl__watchdogInterval = 500
+  _murl__watchdogLastFeed = (millisOp)
+  _murl__watchdogArmed = (booleanConstant false)
+  _murl__telemetryInterval = 200
+  _murl__measuredLeftSpeed = 0
+  _murl__measuredRightSpeed = 0
+  _murl__lastMotionRequested = 0
+  _murl__lastMotionMeasured = 0
+  _murl__lastMotionError = 0
+  _murl__lastMotionDuration = 0
+  '_murl_motion_values_reset'
+}
+
+to '_murl_set_state' newState {
+  _murl__state = newState
+}
+
+to murl_api_version {
+  if (_murl__apiVersion == 0) {_murl__apiVersion = '0.1.0'}
+  return _murl__apiVersion
+}
+
+to murl_has_capability identifier {
+  if (or (_murl__capabilities == 0) (_murl__capabilities == '')) {return (booleanConstant false)}
+  local 'needle' ('[data:join]' ('[data:join]' '|' identifier) '|')
+  return (('[data:find]' needle _murl__capabilities) > 0)
+}
+
+to murl_initialize {
+  if (not _murl__profileSelected) {
+    '_murl_reset_runtime'
+    '_murl_error' 12 'select a robot profile before initialization'
+    return
+  }
+  _murl__ready = (booleanConstant false)
+  adapter_emergency_stop
+  if (not ('_murl_profile_validate')) {
+    '_murl_set_state' 'FAULT'
+    _murl__faultLatched = (booleanConstant true)
+    '_murl_error' 12 'robot profile validation failed'
+    sendBroadcast 'murl.fault'
+    return
+  }
+  local 'adapterStatus' (adapter_initialize)
+  if (adapterStatus != 0) {
+    adapter_emergency_stop
+    '_murl_set_state' 'FAULT'
+    _murl__faultLatched = (booleanConstant true)
+    '_murl_error' adapterStatus 'robot adapter initialization failed'
+    sendBroadcast 'murl.fault'
+    return
+  }
+  '_murl_reset_runtime'
+  _murl__speedLimit = _murl__profileMaxSpeed
+  _murl__accelLimit = _murl__profileMaxAccel
+  _murl__watchdogInterval = _murl__profileDefaultWatchdog
+  _murl__ready = (booleanConstant true)
+  '_murl_set_state' 'IDLE'
+  '_murl_start_safety_service'
+  '_murl_start_evidence_service'
+  sendBroadcast 'murl.ready'
+}
+
+to murl_last_error {
+  return _murl__lastError
+}
+
+to murl_profile_qualification {
+  return _murl__profileQualification
+}
+
+to murl_profile_version {
+  return ('[data:join]' ('[data:join]' _murl__profileID '@') _murl__profileVersion)
+}
+
+to murl_ready {
+  return _murl__ready
+}
+
+to murl_robot_name {
+  return _murl__robotName
+}
+
+to murl_status_code {
+  return _murl__statusCode
+}
+
+to murl_use_profile profileName {
+  if _murl__profileSelected {adapter_emergency_stop}
+  _murl__profileSelected = (booleanConstant false)
+  '_murl_reset_runtime'
+  if (not ('_murl_profile_apply' profileName)) {
+    '_murl_error' 12 ('[data:join]' 'profile not available: ' profileName)
+    return
+  }
+  _murl__profileSelected = (booleanConstant true)
+  adapter_emergency_stop
+  '_murl_clear_error'
+}
+
