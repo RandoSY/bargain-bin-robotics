@@ -1,0 +1,166 @@
+module 'MURL Adapter' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+description 'Self-contained MURL Cutebot Pro adapter v0.1.0.
+Implements the documented I2C command framing directly, maps MURL mm/s to controller cm/s, and exposes HC-SR04 front range plus thresholded line channels. No external MicroBlocks library is required.
+SPDX-License-Identifier: MPL-2.0'
+variables _murl_cbpro__leftCommandSign _murl_cbpro__rightCommandSign _murl_cbpro__leftCount _murl_cbpro__rightCount
+
+  advanced
+  spec 'r' 'adapter_initialize' 'adapter initialize'
+  spec 'r' 'adapter_set_wheel_effort' 'adapter set wheel effort L _ R _' 'num num' 0 0
+  spec 'r' 'adapter_set_wheel_speed' 'adapter set wheel speed L _ R _' 'num num' 0 0
+  spec 'r' 'adapter_stop' 'adapter stop _' 'str' 'coast'
+  spec ' ' 'adapter_emergency_stop' 'adapter emergency stop'
+  spec 'r' 'adapter_encoder_ticks' 'adapter encoder ticks _' 'str' 'left'
+  spec 'r' 'adapter_wheel_speed' 'adapter wheel speed _' 'str' 'left'
+  spec 'r' 'adapter_range_mm' 'adapter range mm _' 'str' 'front'
+  spec 'r' 'adapter_line_permille' 'adapter line permille _' 'str' 'left'
+  spec 'r' 'adapter_imu_value' 'adapter IMU value _' 'str' 'heading'
+  spec 'r' 'adapter_power_value' 'adapter power value _' 'str' 'voltage'
+  spec 'r' 'adapter_bumper_pressed' 'adapter bumper _ pressed?' 'str' 'front'
+  spec 'r' 'adapter_capabilities' 'adapter capabilities'
+  spec 'r' '_murl_cbpro_bit' '_murl Cutebot state _ bit _' 'num num' 0 0
+  spec 'r' '_murl_cbpro_read_byte' '_murl Cutebot read byte'
+  spec ' ' '_murl_cbpro_read_encoders' '_murl Cutebot read encoders'
+  spec 'r' '_murl_cbpro_range_mm' '_murl Cutebot range mm'
+  spec ' ' '_murl_cbpro_set_effort' '_murl Cutebot wheel _ effort _' 'num num' 1 250
+  spec ' ' '_murl_cbpro_write' '_murl Cutebot command _ args _ _ _ _' 'num num num num num' 9 3 0 0 0
+
+to '_murl_cbpro_bit' state bitNumber {
+  return ((state >> bitNumber) & 1)
+}
+
+to '_murl_cbpro_read_byte' {
+  local 'data' (newList 1 99)
+  '[sensors:i2cRead]' 16 data
+  return (at 1 data)
+}
+
+to '_murl_cbpro_read_encoders' {
+  '_murl_cbpro_write' (hexToInt '16') 0 0 0 0
+  local 'data' (newList 10 99)
+  '[sensors:i2cRead]' 16 data
+  _murl_cbpro__leftCount = (((((at 1 data) << 24) | ((at 2 data) << 16)) | ((at 3 data) << 8)) | (at 4 data))
+  _murl_cbpro__rightCount = (((((at 5 data) << 24) | ((at 6 data) << 16)) | ((at 7 data) << 8)) | (at 8 data))
+  if ((at 9 data) == 1) {_murl_cbpro__leftCount = (0 - _murl_cbpro__leftCount)}
+  if ((at 10 data) == 1) {_murl_cbpro__rightCount = (0 - _murl_cbpro__rightCount)}
+}
+
+to '_murl_cbpro_range_mm' {
+  digitalWriteOp 8 false
+  waitMicros 2
+  digitalWriteOp 8 true
+  waitMicros 20
+  digitalWriteOp 8 false
+  '[sensors:captureStart]' 12
+  local 'start' (millisOp)
+  repeatUntil (('[sensors:captureCount]') >= 2) {
+    if ((millisSince start (millisOp)) > 30) {exitLoop}
+    waitMillis 1
+  }
+  local 'pulses' ('[sensors:captureEnd]')
+  if (and ((size pulses) >= 2) ((at 2 pulses) > 0)) {return ((100 * (at 2 pulses)) / 583)}
+  return -32768
+}
+
+to '_murl_cbpro_set_effort' wheel effort {
+  if (effort == 0) {'_murl_cbpro_write' 9 wheel 0 0 0; return}
+  local 'direction' (ifExpression (effort >= 0) 1 0)
+  local 'power' ((absoluteValue effort) / 10)
+  power = (maximum 10 (minimum 100 power))
+  '_murl_cbpro_write' 1 wheel direction power 0
+}
+
+to '_murl_cbpro_write' command arg1 arg2 arg3 arg4 {
+  '[sensors:i2cWrite]' 16 ('[data:makeList]' (hexToInt '99') command arg1 arg2 arg3 arg4 (hexToInt '88'))
+}
+
+to adapter_bumper_pressed identifier {
+  return (booleanConstant false)
+}
+
+to adapter_capabilities {
+  return _murl__capabilities
+}
+
+to adapter_emergency_stop {
+  if ('[sensors:i2cExists]' 16) {'_murl_cbpro_write' 9 3 0 0 0}
+  _murl_cbpro__leftCommandSign = 0
+  _murl_cbpro__rightCommandSign = 0
+  _murl__commandLeftEffort = 0
+  _murl__commandRightEffort = 0
+}
+
+to adapter_encoder_ticks wheel {
+  '_murl_cbpro_read_encoders'
+  if (wheel == 'left') {return (_murl_cbpro__leftCount * _murl__encoderLeftPolarity)}
+  return (_murl_cbpro__rightCount * _murl__encoderRightPolarity)
+}
+
+to adapter_imu_value quantity {
+  return -32768
+}
+
+to adapter_initialize {
+  if (not ('[sensors:i2cExists]' 16)) {return 32}
+  adapter_emergency_stop
+  '_murl_cbpro_write' (hexToInt '0A') 3 0 0 0
+  _murl_cbpro__leftCount = 0
+  _murl_cbpro__rightCount = 0
+  return 0
+}
+
+to adapter_line_permille channel {
+  '_murl_cbpro_write' (hexToInt '12') 0 0 0 0
+  local 'state' ('_murl_cbpro_read_byte')
+  if (channel == 'left') {return ((('_murl_cbpro_bit' state 0) + ('_murl_cbpro_bit' state 1)) * 500)}
+  if (channel == 'right') {return ((('_murl_cbpro_bit' state 2) + ('_murl_cbpro_bit' state 3)) * 500)}
+  return ((('_murl_cbpro_bit' state 1) + ('_murl_cbpro_bit' state 2)) * 500)
+}
+
+to adapter_power_value quantity {
+  return -32768
+}
+
+to adapter_range_mm channel {
+  if (channel != 'front') {return -32768}
+  local 'millimetres' ('_murl_cbpro_range_mm')
+  if (or (millimetres <= 0) (millimetres > 4000)) {'_murl_error' 30 'Cutebot Pro front range invalid'; return -32768}
+  return millimetres
+}
+
+to adapter_set_wheel_effort leftEffort rightEffort {
+  '_murl_cbpro_set_effort' 1 leftEffort
+  '_murl_cbpro_set_effort' 2 rightEffort
+  _murl_cbpro__leftCommandSign = (ifExpression (leftEffort < 0) -1 (ifExpression (leftEffort > 0) 1 0))
+  _murl_cbpro__rightCommandSign = (ifExpression (rightEffort < 0) -1 (ifExpression (rightEffort > 0) 1 0))
+  return 0
+}
+
+to adapter_set_wheel_speed leftSpeed rightSpeed {
+  if (or (and (leftSpeed != 0) ((absoluteValue leftSpeed) < 100)) (and (rightSpeed != 0) ((absoluteValue rightSpeed) < 100))) {return 11}
+  local 'leftDirection' (ifExpression (leftSpeed < 0) 0 1)
+  local 'rightDirection' (ifExpression (rightSpeed < 0) 0 1)
+  local 'leftCM' ((absoluteValue leftSpeed) / 10)
+  local 'rightCM' ((absoluteValue rightSpeed) / 10)
+  '_murl_cbpro_write' 2 leftDirection leftCM rightDirection rightCM
+  _murl_cbpro__leftCommandSign = (ifExpression (leftSpeed < 0) -1 (ifExpression (leftSpeed > 0) 1 0))
+  _murl_cbpro__rightCommandSign = (ifExpression (rightSpeed < 0) -1 (ifExpression (rightSpeed > 0) 1 0))
+  return 0
+}
+
+to adapter_stop mode {
+  adapter_emergency_stop
+  if (mode == 'brake') {return 10}
+  return 0
+}
+
+to adapter_wheel_speed wheel {
+  local 'wheelNumber' (ifExpression (wheel == 'left') 1 2)
+  '_murl_cbpro_write' 5 wheelNumber 0 0 0
+  local 'rawCM' ('_murl_cbpro_read_byte')
+  if (wheel == 'left') {return ((rawCM * 10) * _murl_cbpro__leftCommandSign)}
+  return ((rawCM * 10) * _murl_cbpro__rightCommandSign)
+}
+
