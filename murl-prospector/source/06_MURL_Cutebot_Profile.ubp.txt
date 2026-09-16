@@ -1,0 +1,52 @@
+module 'MURL Profile' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+description 'MURL Cutebot Pro Profile v0.1.0.
+The profile intentionally withholds measured distance and turn: this release has not established a public, traceable encoder scale for those claims. Candidate native velocity, range, and thresholded line services can be enabled for physical commissioning.
+SPDX-License-Identifier: MPL-2.0'
+
+  advanced
+  spec ' ' 'murl_enable_cutebot_candidates' 'commissioning: enable Cutebot Pro candidate capabilities'
+  spec 'r' '_murl_profile_apply' '_murl apply profile _' 'str' 'cutebot-pro'
+  spec 'r' '_murl_profile_validate' '_murl validate profile'
+
+to '_murl_profile_apply' requestedProfile {
+  if (requestedProfile != 'cutebot-pro') {return (booleanConstant false)}
+  _murl__profileID = 'elecfreaks.cutebot-pro.microblocks'
+  _murl__profileVersion = '0.1.0'
+  _murl__profileQualification = 'COMMISSIONING-UNVERIFIED'
+  _murl__robotName = 'ELECFREAKS Cutebot Pro'
+  _murl__boardFamily = 'nrf52833-microbit-v2'
+  _murl__driveGeometry = 'differential'
+  _murl__wheelDiameterMM = 0
+  _murl__wheelTrackMM = 0
+  _murl__encoderCountsPerRev = 0
+  _murl__motorLeftPolarity = 1
+  _murl__motorRightPolarity = 1
+  _murl__encoderLeftPolarity = 1
+  _murl__encoderRightPolarity = 1
+  _murl__profileMaxSpeed = 600
+  _murl__profileMaxAccel = 500
+  _murl__profileDefaultWatchdog = 500
+  _murl__capabilities = '|profile.valid|drive.effort|safety.stop|telemetry.basic|'
+  return (booleanConstant true)
+}
+
+to '_murl_profile_validate' {
+  if (_murl__profileID == '') {return (booleanConstant false)}
+  if (_murl__driveGeometry != 'differential') {return (booleanConstant false)}
+  if (_murl__profileMaxSpeed != 600) {return (booleanConstant false)}
+  if (not (murl_has_capability 'profile.valid')) {return (booleanConstant false)}
+  if (not (murl_has_capability 'drive.effort')) {return (booleanConstant false)}
+  if (not (murl_has_capability 'safety.stop')) {return (booleanConstant false)}
+  return (booleanConstant true)
+}
+
+to murl_enable_cutebot_candidates {
+  if (_murl__profileID != 'elecfreaks.cutebot-pro.microblocks') {'_murl_error' 12 'Cutebot Pro profile is not selected'; return}
+  adapter_emergency_stop
+  _murl__capabilities = '|profile.valid|drive.effort|safety.stop|telemetry.basic|drive.velocity|sensor.range.front|sensor.line|'
+  _murl__profileQualification = 'COMMISSIONING-CANDIDATES-ENABLED'
+  '_murl_clear_error'
+}
+
