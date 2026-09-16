@@ -1,0 +1,319 @@
+module 'MURL Motion Service' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+choices murl_wheelMenu left right
+choices murl_rangeMenu front left right
+choices murl_lineMenu left centre right
+choices murl_accelAxisMenu x y z resultant
+description 'MURL Motion and Sensing Service v0.1.0.
+Portable differential-drive effort, velocity, measured distance, measured turn, progress, cancellation, and normalized sensor reporters.
+All finite moves yield every 20 ms so safety and other MicroBlocks tasks continue.
+SPDX-License-Identifier: MPL-2.0'
+variables _murl__finiteStartLeft _murl__finiteStartRight _murl__finiteTargetLeft _murl__finiteTargetRight _murl__finiteStartMS _murl__finiteTimeoutMS _murl__finiteLastProgressMS _murl__finiteLastLeft _murl__finiteLastRight
+
+  spec ' ' 'murl_drive_effort' 'drive effort _ permille' 'num' 250
+  spec ' ' 'murl_set_wheel_effort' 'set wheel effort L _ R _ permille' 'num num' 250 250
+  spec ' ' 'murl_drive_speed' 'drive speed _ mm/s' 'num' 150
+  spec ' ' 'murl_set_wheel_speed' 'set wheel speed L _ R _ mm/s' 'num num' 150 150
+  spec ' ' 'murl_move' 'move _ mm at _ mm/s' 'num num' 250 150
+  spec ' ' 'murl_turn' 'turn _ cdeg at _ cdeg/s' 'num num' 9000 4500
+  spec 'r' 'murl_motion_active' 'robot motion active?'
+  spec 'r' 'murl_motion_progress' 'robot motion progress permille'
+  spec ' ' 'murl_cancel_motion' 'cancel robot motion'
+  space
+  spec 'r' 'murl_wheel_encoder' 'wheel encoder _ ticks' 'menu.murl_wheelMenu' 'left'
+  spec 'r' 'murl_wheel_speed' 'wheel speed _ mm/s' 'menu.murl_wheelMenu' 'left'
+  spec 'r' 'murl_range' 'range _ mm' 'menu.murl_rangeMenu' 'front'
+  spec 'r' 'murl_line' 'line _ permille' 'menu.murl_lineMenu' 'left'
+  spec 'r' 'murl_heading' 'robot heading cdeg'
+  spec 'r' 'murl_acceleration' 'robot acceleration _ mg' 'menu.murl_accelAxisMenu' 'resultant'
+  spec 'r' 'murl_bumper' 'bumper _ pressed?' 'str' 'front'
+  spec 'r' 'murl_battery_voltage' 'battery voltage mV'
+  space
+  advanced
+  spec 'r' '_murl_abs_ticks' '_murl abs ticks from _ to _' 'num num' 0 100
+  spec ' ' '_murl_begin_continuous' '_murl begin continuous motion _' 'str' 'effort'
+  spec ' ' '_murl_finish_finite' '_murl finish finite motion'
+  spec 'r' '_murl_mm_to_ticks' '_murl convert _ mm to ticks' 'num' 100
+  spec ' ' '_murl_motion_fault' '_murl motion fault code _ message _' 'num str' 20 'motion timeout'
+  spec 'r' '_murl_motion_reached' '_murl motion reached targets?'
+  spec 'r' '_murl_target_reached' '_murl target reached start _ now _ target _' 'num num num' 0 100 100
+  spec ' ' '_murl_run_finite' '_murl run finite L speed _ R speed _ L ticks _ R ticks _ timeout _ ms' 'num num num num num' 150 150 500 500 5000
+  spec ' ' '_murl_update_finite' '_murl update finite progress'
+  spec 'r' '_murl_ticks_to_mm' '_murl convert _ ticks to mm' 'num' 100
+  spec 'r' '_murl_turn_rate_to_wheel_speed' '_murl turn rate _ cdeg/s to wheel mm/s' 'num' 4500
+
+to '_murl_abs_ticks' startTicks currentTicks {
+  return (absoluteValue (currentTicks - startTicks))
+}
+
+to '_murl_begin_continuous' kind {
+  _murl__motionActive = (booleanConstant true)
+  _murl__motionKind = kind
+  _murl__motionProgress = -1
+  _murl__motionCancelled = (booleanConstant false)
+  '_murl_set_state' 'MOVING'
+  '_murl_arm_watchdog'
+}
+
+to '_murl_finish_finite' {
+  adapter_stop 'coast'
+  '_murl_disarm_watchdog'
+  _murl__motionActive = (booleanConstant false)
+  _murl__motionProgress = 1000
+  _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+  '_murl_set_state' 'IDLE'
+  '_murl_clear_error'
+}
+
+to '_murl_mm_to_ticks' mm {
+  local 'circumferenceMM' ((_murl__wheelDiameterMM * 31416) / 10000)
+  if (or (circumferenceMM <= 0) (_murl__encoderCountsPerRev <= 0)) {return 0}
+  return ((mm * _murl__encoderCountsPerRev) / circumferenceMM)
+}
+
+to '_murl_motion_fault' code message {
+  adapter_emergency_stop
+  '_murl_disarm_watchdog'
+  _murl__motionActive = (booleanConstant false)
+  _murl__faultLatched = (booleanConstant true)
+  '_murl_set_state' 'FAULT'
+  '_murl_error' code message
+  _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+  '_murl_evidence_motion_completed'
+  sendBroadcast 'murl.fault'
+}
+
+to '_murl_motion_reached' {
+  local 'leftNow' (adapter_encoder_ticks 'left')
+  local 'rightNow' (adapter_encoder_ticks 'right')
+  local 'leftDone' ('_murl_target_reached' _murl__finiteStartLeft leftNow _murl__finiteTargetLeft)
+  local 'rightDone' ('_murl_target_reached' _murl__finiteStartRight rightNow _murl__finiteTargetRight)
+  return (and leftDone rightDone)
+}
+
+to '_murl_target_reached' startTicks currentTicks targetDelta {
+  local 'travelled' (currentTicks - startTicks)
+  if (targetDelta >= 0) {return (travelled >= targetDelta)}
+  return (travelled <= targetDelta)
+}
+
+to '_murl_run_finite' leftSpeed rightSpeed leftTicks rightTicks timeoutMS {
+  _murl__finiteStartLeft = (adapter_encoder_ticks 'left')
+  _murl__finiteStartRight = (adapter_encoder_ticks 'right')
+  _murl__finiteTargetLeft = leftTicks
+  _murl__finiteTargetRight = rightTicks
+  _murl__finiteStartMS = (millisOp)
+  _murl__finiteTimeoutMS = timeoutMS
+  _murl__finiteLastProgressMS = _murl__finiteStartMS
+  _murl__finiteLastLeft = _murl__finiteStartLeft
+  _murl__finiteLastRight = _murl__finiteStartRight
+  _murl__motionProgress = 0
+  '_murl_arm_watchdog'
+  local 'adapterStatus' (adapter_set_wheel_speed leftSpeed rightSpeed)
+  if (adapterStatus != 0) {
+    '_murl_motion_fault' adapterStatus 'adapter rejected finite motion'
+    return
+  }
+  repeatUntil (not _murl__motionActive) {
+    '_murl_update_finite'
+    if ('_murl_motion_reached') {
+      '_murl_finish_finite'
+      return
+    }
+    if ((millisSince _murl__finiteStartMS (millisOp)) > _murl__finiteTimeoutMS) {
+      '_murl_motion_fault' 20 'finite motion exceeded timeout'
+      return
+    }
+    if ((millisSince _murl__finiteLastProgressMS (millisOp)) > 1000) {
+      '_murl_motion_fault' 21 'finite motion stalled'
+      return
+    }
+    murl_feed_watchdog
+    waitMillis 20
+  }
+}
+
+to '_murl_ticks_to_mm' ticks {
+  local 'circumferenceMM' ((_murl__wheelDiameterMM * 31416) / 10000)
+  if (_murl__encoderCountsPerRev <= 0) {return 0}
+  return ((ticks * circumferenceMM) / _murl__encoderCountsPerRev)
+}
+
+to '_murl_turn_rate_to_wheel_speed' turnRate {
+  local 'trackCircumferenceMM' ((_murl__wheelTrackMM * 31416) / 10000)
+  return (((absoluteValue turnRate) * trackCircumferenceMM) / 36000)
+}
+
+to '_murl_update_finite' {
+  local 'leftNow' (adapter_encoder_ticks 'left')
+  local 'rightNow' (adapter_encoder_ticks 'right')
+  local 'leftProgress' ('_murl_abs_ticks' _murl__finiteStartLeft leftNow)
+  local 'rightProgress' ('_murl_abs_ticks' _murl__finiteStartRight rightNow)
+  local 'targetMean' (((absoluteValue _murl__finiteTargetLeft) + (absoluteValue _murl__finiteTargetRight)) / 2)
+  if (targetMean > 0) {
+    _murl__motionProgress = (minimum 1000 ((((leftProgress + rightProgress) / 2) * 1000) / targetMean))
+  }
+  if (or ((absoluteValue (leftNow - _murl__finiteLastLeft)) >= 2) ((absoluteValue (rightNow - _murl__finiteLastRight)) >= 2)) {
+    _murl__finiteLastProgressMS = (millisOp)
+    _murl__finiteLastLeft = leftNow
+    _murl__finiteLastRight = rightNow
+  }
+  '_murl_evidence_sample_if_due'
+}
+
+to murl_acceleration axis {
+  if (not ('_murl_require_capability' 'sensor.imu.accel')) {return -32768}
+  return (adapter_imu_value axis)
+}
+
+to murl_battery_voltage {
+  if (not ('_murl_require_capability' 'power.voltage')) {return -32768}
+  return (adapter_power_value 'voltage')
+}
+
+to murl_bumper identifier {
+  if (not ('_murl_require_capability' 'sensor.bumper')) {return (booleanConstant false)}
+  return (adapter_bumper_pressed identifier)
+}
+
+to murl_cancel_motion {
+  if (not _murl__motionActive) {return}
+  _murl__motionCancelled = (booleanConstant true)
+  adapter_stop 'coast'
+  '_murl_disarm_watchdog'
+  _murl__motionActive = (booleanConstant false)
+  _murl__motionProgress = -1
+  '_murl_set_state' 'IDLE'
+  '_murl_clear_error'
+  _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+  '_murl_evidence_motion_completed'
+  sendBroadcast 'murl.motion.cancelled'
+}
+
+to murl_drive_effort effort {
+  murl_set_wheel_effort effort effort
+}
+
+to murl_drive_speed speed {
+  murl_set_wheel_speed speed speed
+}
+
+to murl_heading {
+  if (not ('_murl_require_capability' 'sensor.imu.heading')) {return -32768}
+  local 'heading' ((adapter_imu_value 'heading') % 36000)
+  if (heading < 0) {heading += 36000}
+  return heading
+}
+
+to murl_line channel {
+  if (not ('_murl_require_capability' 'sensor.line')) {return -32768}
+  return (adapter_line_permille channel)
+}
+
+to murl_motion_active {
+  return _murl__motionActive
+}
+
+to murl_motion_progress {
+  return _murl__motionProgress
+}
+
+to murl_move distance speed {
+  if (not ('_murl_require_capability' 'motion.distance')) {return}
+  if _murl__motionActive {'_murl_error' 2 'finite motion cannot replace active motion'; return}
+  if (or (distance == 0) (speed == 0)) {'_murl_error' 11 'distance and speed must be nonzero'; return}
+  local 'limitedSpeed' (minimum (absoluteValue speed) _murl__speedLimit)
+  local 'signedSpeed' (ifExpression (distance < 0) (0 - limitedSpeed) limitedSpeed)
+  local 'targetTicks' ('_murl_mm_to_ticks' distance)
+  local 'expectedMS' (((absoluteValue distance) * 1000) / limitedSpeed)
+  _murl__motionActive = (booleanConstant true)
+  _murl__motionKind = 'distance'
+  _murl__motionCancelled = (booleanConstant false)
+  _murl__lastMotionRequested = distance
+  '_murl_set_state' 'MOVING'
+  '_murl_evidence_motion_started' 'distance' distance limitedSpeed
+  '_murl_run_finite' signedSpeed signedSpeed targetTicks targetTicks ((expectedMS * 3) + 2000)
+  if (and (_murl__motionProgress == 1000) (and (not _murl__faultLatched) (not _murl__motionCancelled))) {
+    local 'leftDelta' ((adapter_encoder_ticks 'left') - _murl__finiteStartLeft)
+    local 'rightDelta' ((adapter_encoder_ticks 'right') - _murl__finiteStartRight)
+    _murl__lastMotionMeasured = ('_murl_ticks_to_mm' ((leftDelta + rightDelta) / 2))
+    _murl__lastMotionError = (_murl__lastMotionMeasured - distance)
+    '_murl_evidence_motion_completed'
+    sendBroadcast 'murl.motion.complete'
+  }
+}
+
+to murl_range channel {
+  local 'capability' ('[data:join]' 'sensor.range.' channel)
+  if (not ('_murl_require_capability' capability)) {return -32768}
+  return (adapter_range_mm channel)
+}
+
+to murl_set_wheel_effort leftEffort rightEffort {
+  if (not ('_murl_require_capability' 'drive.effort')) {return}
+  if (and (leftEffort == 0) (rightEffort == 0)) {murl_stop_robot 'coast'; return}
+  if (or ((absoluteValue leftEffort) > 1000) ((absoluteValue rightEffort) > 1000)) {
+    '_murl_error' 11 'wheel effort must be -1000 to 1000 permille'
+    return
+  }
+  local 'adapterStatus' (adapter_set_wheel_effort leftEffort rightEffort)
+  if (adapterStatus != 0) {'_murl_error' adapterStatus 'adapter rejected wheel effort'; return}
+  _murl__commandLeftEffort = leftEffort
+  _murl__commandRightEffort = rightEffort
+  '_murl_begin_continuous' 'effort'
+  '_murl_clear_error'
+}
+
+to murl_set_wheel_speed leftSpeed rightSpeed {
+  if (not ('_murl_require_capability' 'drive.velocity')) {return}
+  if (and (leftSpeed == 0) (rightSpeed == 0)) {murl_stop_robot 'coast'; return}
+  if (or ((absoluteValue leftSpeed) > _murl__speedLimit) ((absoluteValue rightSpeed) > _murl__speedLimit)) {
+    '_murl_error' 11 'wheel speed exceeds active speed limit'
+    return
+  }
+  local 'adapterStatus' (adapter_set_wheel_speed leftSpeed rightSpeed)
+  if (adapterStatus != 0) {'_murl_error' adapterStatus 'adapter rejected wheel speed'; return}
+  '_murl_begin_continuous' 'velocity'
+  '_murl_clear_error'
+}
+
+to murl_turn angle turnRate {
+  if (not ('_murl_require_capability' 'motion.turn')) {return}
+  if _murl__motionActive {'_murl_error' 2 'finite motion cannot replace active motion'; return}
+  if (or (angle == 0) (turnRate == 0)) {'_murl_error' 11 'angle and turn rate must be nonzero'; return}
+  local 'wheelSpeed' ('_murl_turn_rate_to_wheel_speed' turnRate)
+  wheelSpeed = (minimum wheelSpeed _murl__speedLimit)
+  if (wheelSpeed <= 0) {'_murl_error' 11 'turn rate is below robot resolution'; return}
+  local 'trackCircumferenceMM' ((_murl__wheelTrackMM * 31416) / 10000)
+  local 'wheelDistance' (((absoluteValue angle) * trackCircumferenceMM) / 36000)
+  local 'wheelTicks' ('_murl_mm_to_ticks' wheelDistance)
+  local 'direction' (ifExpression (angle > 0) 1 -1)
+  local 'expectedMS' (((absoluteValue angle) * 1000) / (absoluteValue turnRate))
+  _murl__motionActive = (booleanConstant true)
+  _murl__motionKind = 'turn'
+  _murl__motionCancelled = (booleanConstant false)
+  _murl__lastMotionRequested = angle
+  '_murl_set_state' 'MOVING'
+  '_murl_evidence_motion_started' 'turn' angle turnRate
+  '_murl_run_finite' (0 - (direction * wheelSpeed)) (direction * wheelSpeed) (0 - (direction * wheelTicks)) (direction * wheelTicks) ((expectedMS * 3) + 2000)
+  if (and (_murl__motionProgress == 1000) (and (not _murl__faultLatched) (not _murl__motionCancelled))) {
+    local 'leftMM' ('_murl_ticks_to_mm' ((adapter_encoder_ticks 'left') - _murl__finiteStartLeft))
+    local 'rightMM' ('_murl_ticks_to_mm' ((adapter_encoder_ticks 'right') - _murl__finiteStartRight))
+    _murl__lastMotionMeasured = (((rightMM - leftMM) * 57296) / (10 * _murl__wheelTrackMM))
+    _murl__lastMotionError = (_murl__lastMotionMeasured - angle)
+    '_murl_evidence_motion_completed'
+    sendBroadcast 'murl.motion.complete'
+  }
+}
+
+to murl_wheel_encoder wheel {
+  if (not ('_murl_require_capability' 'sensor.encoder')) {return -32768}
+  return (adapter_encoder_ticks wheel)
+}
+
+to murl_wheel_speed wheel {
+  if (not ('_murl_require_capability' 'drive.velocity')) {return -32768}
+  return (adapter_wheel_speed wheel)
+}
+
