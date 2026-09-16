@@ -1,0 +1,206 @@
+module 'MURL Evidence Service' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+description 'MURL Evidence and Telemetry Service v0.1.0.
+Produces portable key-value trial records, bounded telemetry samples, identity, requested and measured motion, timing, state, limits, watchdog evidence, and operator context.
+SPDX-License-Identifier: MPL-2.0'
+variables _murl__evidenceGeneration _murl__trialActive _murl__trialName _murl__trialTimestamp _murl__trialSurface _murl__trialPayload _murl__trialNotes _murl__trialStartMS _murl__trialEndMS _murl__trialStartState _murl__trialReport _murl__trialMotions _murl__trialSamples _murl__trialSampleCount _murl__lastTelemetrySample _murl__nextTelemetryMS _murl__evidenceMotionKind _murl__evidenceMotionRequested _murl__evidenceMotionSpeed
+
+  spec ' ' 'murl_set_telemetry_interval' 'set telemetry interval _ ms' 'num' 200
+  spec ' ' 'murl_set_trial_context' 'set trial context timestamp _ surface _ payload _ notes _' 'str str str str' '2026-08-14T00:00:00Z' 'smooth floor' 'standard' ''
+  spec ' ' 'murl_begin_trial' 'begin robot trial _' 'str' 'passport-1000-mm'
+  spec ' ' 'murl_end_trial' 'end robot trial'
+  spec 'r' 'murl_trial_report' 'robot trial report'
+  spec 'r' 'murl_trial_samples' 'robot trial samples'
+  spec 'r' 'murl_telemetry_sample' 'robot telemetry sample'
+  spec 'r' 'murl_trial_active' 'robot trial active?'
+  space
+  advanced
+  spec ' ' '_murl_add_pair' '_murl add key _ value _ to _' 'str auto list' 'key' 'value' 'list'
+  spec ' ' '_murl_evidence_motion_completed' '_murl evidence motion completed'
+  spec ' ' '_murl_evidence_motion_started' '_murl evidence motion _ requested _ speed _' 'str num num' 'distance' 1000 150
+  spec ' ' '_murl_evidence_sample_if_due' '_murl evidence sample if due'
+  spec ' ' '_murl_evidence_telemetry_loop' '_murl evidence telemetry loop'
+  spec ' ' '_murl_populate_trial_report' '_murl populate trial report'
+  spec ' ' '_murl_populate_trial_identity' '_murl populate trial identity'
+  spec ' ' '_murl_populate_trial_results' '_murl populate trial results'
+  spec ' ' '_murl_start_evidence_service' '_murl start evidence service'
+
+to '_murl_add_pair' key value destination {
+  '[data:addLast]' ('[data:makeList]' key value) destination
+}
+
+to '_murl_evidence_motion_completed' {
+  if (not _murl__trialActive) {return}
+  local 'record' ('[data:makeList]')
+  '_murl_add_pair' 'kind' _murl__evidenceMotionKind record
+  '_murl_add_pair' 'requested' _murl__evidenceMotionRequested record
+  '_murl_add_pair' 'requested_speed' _murl__evidenceMotionSpeed record
+  '_murl_add_pair' 'measured' _murl__lastMotionMeasured record
+  '_murl_add_pair' 'error' _murl__lastMotionError record
+  '_murl_add_pair' 'duration_ms' _murl__lastMotionDuration record
+  '_murl_add_pair' 'status_code' _murl__statusCode record
+  '[data:addLast]' record _murl__trialMotions
+}
+
+to '_murl_evidence_motion_started' kind requested speed {
+  _murl__evidenceMotionKind = kind
+  _murl__evidenceMotionRequested = requested
+  _murl__evidenceMotionSpeed = speed
+  _murl__lastMotionRequested = requested
+  _murl__lastMotionMeasured = 0
+  _murl__lastMotionError = 0
+  _murl__lastMotionDuration = 0
+}
+
+to '_murl_evidence_sample_if_due' {
+  if (millisSince _murl__nextTelemetryMS (millisOp) < 0) {return}
+  _murl__lastTelemetrySample = (murl_telemetry_sample)
+  _murl__trialSampleCount += 1
+  if _murl__trialActive {
+    if ((size _murl__trialSamples) >= 32) {'[data:delete]' 1 _murl__trialSamples}
+    '[data:addLast]' _murl__lastTelemetrySample _murl__trialSamples
+  }
+  _murl__nextTelemetryMS = ((millisOp) + _murl__telemetryInterval)
+  sendBroadcast 'murl.telemetry.sample'
+}
+
+to '_murl_evidence_telemetry_loop' {
+  local 'generation' _murl__evidenceGeneration
+  repeatUntil (generation != _murl__evidenceGeneration) {
+    if _murl__ready {'_murl_evidence_sample_if_due'}
+    waitMillis 20
+  }
+}
+
+to '_murl_populate_trial_report' {
+  _murl__trialReport = ('[data:makeList]')
+  '_murl_populate_trial_identity'
+  '_murl_populate_trial_results'
+}
+
+to '_murl_populate_trial_identity' {
+  '_murl_add_pair' 'format' 'MURL-TRIAL-0.1' _murl__trialReport
+  '_murl_add_pair' 'trial_name' _murl__trialName _murl__trialReport
+  '_murl_add_pair' 'timestamp' _murl__trialTimestamp _murl__trialReport
+  '_murl_add_pair' 'murl_api' _murl__apiVersion _murl__trialReport
+  '_murl_add_pair' 'profile_id' _murl__profileID _murl__trialReport
+  '_murl_add_pair' 'profile_version' _murl__profileVersion _murl__trialReport
+  '_murl_add_pair' 'qualification' _murl__profileQualification _murl__trialReport
+  '_murl_add_pair' 'robot_name' _murl__robotName _murl__trialReport
+  '_murl_add_pair' 'board_family' _murl__boardFamily _murl__trialReport
+  '_murl_add_pair' 'detected_board' (boardType) _murl__trialReport
+  '_murl_add_pair' 'capabilities' _murl__capabilities _murl__trialReport
+  '_murl_add_pair' 'duration_ms' (millisSince _murl__trialStartMS _murl__trialEndMS) _murl__trialReport
+  '_murl_add_pair' 'start_state' _murl__trialStartState _murl__trialReport
+  '_murl_add_pair' 'end_state' _murl__state _murl__trialReport
+}
+
+to '_murl_populate_trial_results' {
+  '_murl_add_pair' 'status_code' _murl__statusCode _murl__trialReport
+  '_murl_add_pair' 'last_error' _murl__lastError _murl__trialReport
+  '_murl_add_pair' 'speed_limit_mm_s' _murl__speedLimit _murl__trialReport
+  '_murl_add_pair' 'accel_limit_mm_s2' _murl__accelLimit _murl__trialReport
+  '_murl_add_pair' 'watchdog_ms' _murl__watchdogInterval _murl__trialReport
+  '_murl_add_pair' 'watchdog_trips' _murl__watchdogTripCount _murl__trialReport
+  '_murl_add_pair' 'watchdog_stop_latency_ms' _murl__watchdogStopLatency _murl__trialReport
+  '_murl_add_pair' 'wheel_diameter_mm' _murl__wheelDiameterMM _murl__trialReport
+  '_murl_add_pair' 'wheel_track_mm' _murl__wheelTrackMM _murl__trialReport
+  '_murl_add_pair' 'encoder_counts_per_rev' _murl__encoderCountsPerRev _murl__trialReport
+  '_murl_add_pair' 'surface' _murl__trialSurface _murl__trialReport
+  '_murl_add_pair' 'payload' _murl__trialPayload _murl__trialReport
+  '_murl_add_pair' 'notes' _murl__trialNotes _murl__trialReport
+  '_murl_add_pair' 'motions' _murl__trialMotions _murl__trialReport
+  '_murl_add_pair' 'sample_count' _murl__trialSampleCount _murl__trialReport
+  '_murl_add_pair' 'retained_samples' (size _murl__trialSamples) _murl__trialReport
+}
+
+to '_murl_start_evidence_service' {
+  _murl__evidenceGeneration += 1
+  if (_murl__telemetryInterval < 50) {_murl__telemetryInterval = 200}
+  _murl__nextTelemetryMS = (millisOp)
+  _murl__trialActive = (booleanConstant false)
+  _murl__trialReport = ('[data:makeList]')
+  _murl__trialMotions = ('[data:makeList]')
+  _murl__trialSamples = ('[data:makeList]')
+  sendBroadcast '_murl_evidence_telemetry_loop'
+}
+
+to murl_begin_trial trialName {
+  if (not ('_murl_require_ready')) {return}
+  if (trialName == '') {'_murl_error' 11 'trial name is required'; return}
+  _murl__trialName = trialName
+  _murl__trialStartMS = (millisOp)
+  _murl__trialEndMS = _murl__trialStartMS
+  _murl__trialStartState = _murl__state
+  _murl__trialMotions = ('[data:makeList]')
+  _murl__trialSamples = ('[data:makeList]')
+  _murl__trialSampleCount = 0
+  _murl__trialActive = (booleanConstant true)
+  '_murl_clear_error'
+  '_murl_evidence_sample_if_due'
+}
+
+to murl_end_trial {
+  if (not _murl__trialActive) {'_murl_error' 11 'no robot trial is active'; return}
+  _murl__trialEndMS = (millisOp)
+  _murl__trialActive = (booleanConstant false)
+  '_murl_populate_trial_report'
+}
+
+to murl_set_telemetry_interval requestedInterval {
+  if (or (requestedInterval < 50) (requestedInterval > 5000)) {
+    '_murl_error' 11 'telemetry interval must be 50 to 5000 ms'
+    return
+  }
+  _murl__telemetryInterval = requestedInterval
+  _murl__nextTelemetryMS = (millisOp)
+  '_murl_clear_error'
+}
+
+to murl_set_trial_context timestamp surface payload notes {
+  _murl__trialTimestamp = timestamp
+  _murl__trialSurface = surface
+  _murl__trialPayload = payload
+  _murl__trialNotes = notes
+}
+
+to murl_telemetry_sample {
+  local 'sample' ('[data:makeList]')
+  '_murl_add_pair' 'ms' (millisOp) sample
+  '_murl_add_pair' 'state' _murl__state sample
+  '_murl_add_pair' 'status_code' _murl__statusCode sample
+  '_murl_add_pair' 'motion_kind' _murl__motionKind sample
+  '_murl_add_pair' 'progress_permille' _murl__motionProgress sample
+  '_murl_add_pair' 'left_effort_permille' _murl__commandLeftEffort sample
+  '_murl_add_pair' 'right_effort_permille' _murl__commandRightEffort sample
+  if (murl_has_capability 'sensor.encoder') {
+    '_murl_add_pair' 'left_ticks' (adapter_encoder_ticks 'left') sample
+    '_murl_add_pair' 'right_ticks' (adapter_encoder_ticks 'right') sample
+  }
+  if (murl_has_capability 'drive.velocity') {
+    '_murl_add_pair' 'left_speed_mm_s' (adapter_wheel_speed 'left') sample
+    '_murl_add_pair' 'right_speed_mm_s' (adapter_wheel_speed 'right') sample
+  }
+  if (murl_has_capability 'power.voltage') {
+    '_murl_add_pair' 'battery_mv' (adapter_power_value 'voltage') sample
+  }
+  return sample
+}
+
+to murl_trial_active {
+  return _murl__trialActive
+}
+
+to murl_trial_report {
+  if _murl__trialActive {
+    _murl__trialEndMS = (millisOp)
+    '_murl_populate_trial_report'
+  }
+  return _murl__trialReport
+}
+
+to murl_trial_samples {
+  return _murl__trialSamples
+}
+
