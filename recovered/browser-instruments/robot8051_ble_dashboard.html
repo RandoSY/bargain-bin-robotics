@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Robot8051 ESP32-C3 BLE Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #101820;
+    --panel: #182635;
+    --panel2: #203244;
+    --text: #edf6ff;
+    --muted: #a9bdd0;
+    --line: #35506a;
+    --good: #72e09b;
+    --warn: #ffd36a;
+    --bad: #ff7777;
+    --accent: #6cc7ff;
+    --button: #26435a;
+    --button-hover: #315873;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: radial-gradient(circle at top left, #1b3d56, var(--bg) 45%);
+    color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  header {
+    padding: 18px 22px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 1.45rem;
+    letter-spacing: 0.02em;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    margin-top: 4px;
+    font-size: 0.95rem;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 14px;
+    padding: 14px;
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+
+  .panel {
+    background: rgba(24, 38, 53, 0.95);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+  }
+
+  .panel h2 {
+    margin: 0 0 10px;
+    font-size: 1.05rem;
+    color: var(--accent);
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+
+  button {
+    background: var(--button);
+    color: var(--text);
+    border: 1px solid #416580;
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    font-weight: 650;
+    min-width: 86px;
+  }
+
+  button:hover { background: var(--button-hover); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .primary { border-color: var(--accent); }
+  .danger { border-color: var(--bad); }
+  .ok { border-color: var(--good); }
+  .warn { border-color: var(--warn); }
+
+  input {
+    flex: 1;
+    min-width: 220px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #0c141c;
+    color: var(--text);
+    font-size: 1rem;
+  }
+
+  .statusGrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(110px, 1fr));
+    gap: 10px;
+  }
+
+  .card {
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    min-height: 74px;
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .value {
+    font-size: 1.45rem;
+    font-weight: 800;
+    margin-top: 5px;
+  }
+
+  .lcd {
+    font-family: "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 3.2rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    background: #071014;
+    border: 1px solid #406372;
+    border-radius: 18px;
+    padding: 18px;
+    text-align: center;
+    color: #bbf7d0;
+    box-shadow: inset 0 0 18px rgba(114, 224, 155, 0.10);
+  }
+
+  .strip {
+    width: 100%;
+    height: 150px;
+    background: #071014;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+
+  pre {
+    margin: 0;
+    width: 100%;
+    height: 360px;
+    overflow: auto;
+    background: #071014;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    color: #d7ecff;
+    font-family: "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 0.92rem;
+    white-space: pre-wrap;
+  }
+
+  .small {
+    color: var(--muted);
+    font-size: 0.86rem;
+    line-height: 1.35;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    .lcd { font-size: 2.4rem; }
+  }
+</style>
+</head>
+
+<body>
+<header>
+  <h1>Robot8051 ESP32-C3 BLE Dashboard</h1>
+  <div class="subtitle">
+    Chrome Web Bluetooth control panel for an 8051 two-wheel robot using an ESP32-C3 Nordic UART Service bridge.
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Connection</h2>
+    <div class="row">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="disconnectBtn" class="danger" disabled>Disconnect</button>
+      <button id="clearBtn">Clear Log</button>
+      <span id="connPill" class="pill">Disconnected</span>
+    </div>
+    <div class="small">
+      Use Chrome on a computer or Android device with Web Bluetooth enabled. The ESP32-C3 should advertise as
+      <b>Robot8051-C3</b>. BLE writes go to the 8051 UART; 8051 UART text is returned as BLE notifications.
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Large Range Gauge</h2>
+    <div id="rangeLcd" class="lcd">--- cm</div>
+  </section>
+
+  <section class="panel">
+    <h2>Robot Controls</h2>
+    <div class="row">
+      <button class="cmd ok" data-cmd="HELLO">HELLO</button>
+      <button class="cmd" data-cmd="STATUS">STATUS</button>
+      <button class="cmd ok" data-cmd="START">START</button>
+      <button class="cmd danger" data-cmd="STOP">STOP</button>
+      <button class="cmd warn" data-cmd="DEMO">DEMO</button>
+      <button class="cmd" data-cmd="IDLE">IDLE</button>
+    </div>
+    <div class="row">
+      <button class="cmd" data-cmd="STREAM ON">STREAM ON</button>
+      <button class="cmd" data-cmd="STREAM OFF">STREAM OFF</button>
+      <button class="cmd" data-cmd="BRIDGE STATUS">BRIDGE STATUS</button>
+    </div>
+    <div class="row">
+      <button class="cmd" data-cmd="DRIVE FWD 80">FWD 80</button>
+      <button class="cmd" data-cmd="DRIVE REV 60">REV 60</button>
+      <button class="cmd" data-cmd="TURN LEFT 70">LEFT 70</button>
+      <button class="cmd" data-cmd="TURN RIGHT 70">RIGHT 70</button>
+    </div>
+    <div class="row">
+      <input id="cmdInput" value="STATUS" spellcheck="false">
+      <button id="sendBtn" class="primary">Send</button>
+    </div>
+    <div class="small">
+      Commands are sent with a newline. Manual drive commands assume your 8051 firmware understands the UMA/GSA text protocol.
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Parsed State</h2>
+    <div class="statusGrid">
+      <div class="card">
+        <div class="label">Mode</div>
+        <div id="modeValue" class="value">---</div>
+      </div>
+      <div class="card">
+        <div class="label">Action</div>
+        <div id="actionValue" class="value">---</div>
+      </div>
+      <div class="card">
+        <div class="label">Speed</div>
+        <div id="speedValue" class="value">---</div>
+      </div>
+      <div class="card">
+        <div class="label">Device</div>
+        <div id="deviceValue" class="value">---</div>
+      </div>
+      <div class="card">
+        <div class="label">Firmware</div>
+        <div id="fwValue" class="value">---</div>
+      </div>
+      <div class="card">
+        <div class="label">Last Event</div>
+        <div id="eventValue" class="value">---</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Range Strip Chart</h2>
+    <canvas id="chart" class="strip" width="700" height="150"></canvas>
+    <div class="small">Shows recent RANGE_CM values parsed from DATA lines.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Raw Telemetry Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // write to ESP32-C3
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notify from ESP32-C3
+
+let device = null;
+let server = null;
+let rxChar = null;
+let txChar = null;
+let connected = false;
+let rxTextBuffer = "";
+let rangeHistory = [];
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+const connectBtn = document.getElementById("connectBtn");
+const disconnectBtn = document.getElementById("disconnectBtn");
+const clearBtn = document.getElementById("clearBtn");
+const connPill = document.getElementById("connPill");
+const logEl = document.getElementById("log");
+const rangeLcd = document.getElementById("rangeLcd");
+const cmdInput = document.getElementById("cmdInput");
+const sendBtn = document.getElementById("sendBtn");
+
+const modeValue = document.getElementById("modeValue");
+const actionValue = document.getElementById("actionValue");
+const speedValue = document.getElementById("speedValue");
+const deviceValue = document.getElementById("deviceValue");
+const fwValue = document.getElementById("fwValue");
+const eventValue = document.getElementById("eventValue");
+
+const chart = document.getElementById("chart");
+const ctx = chart.getContext("2d");
+
+function setConnectedState(isConnected) {
+  connected = isConnected;
+  connectBtn.disabled = isConnected;
+  disconnectBtn.disabled = !isConnected;
+  sendBtn.disabled = !isConnected;
+  document.querySelectorAll(".cmd").forEach(btn => btn.disabled = !isConnected);
+  connPill.textContent = isConnected ? "Connected" : "Disconnected";
+  connPill.style.color = isConnected ? "var(--good)" : "var(--muted)";
+}
+
+function log(line, prefix = "") {
+  const stamp = new Date().toLocaleTimeString();
+  logEl.textContent += `[${stamp}] ${prefix}${line}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function parseKeyValues(line) {
+  const parts = line.split(",");
+  const out = { type: parts[0] || "" };
+
+  for (const p of parts.slice(1)) {
+    const eq = p.indexOf("=");
+    if (eq > 0) {
+      const key = p.slice(0, eq).trim();
+      const value = p.slice(eq + 1).trim();
+      out[key] = value;
+    } else if (p.trim()) {
+      if (!out.items) out.items = [];
+      out.items.push(p.trim());
+    }
+  }
+  return out;
+}
+
+function processLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  log(trimmed, "RX ");
+
+  const msg = parseKeyValues(trimmed);
+
+  if (msg.type === "DEVICE") {
+    if (msg.items && msg.items.length > 0) deviceValue.textContent = msg.items[0];
+    if (msg.FW) fwValue.textContent = msg.FW;
+  }
+
+  if (msg.type === "STATUS" || msg.type === "DATA") {
+    if (msg.MODE) modeValue.textContent = msg.MODE;
+    if (msg.ACTION) actionValue.textContent = msg.ACTION;
+    if (msg.SPEED) speedValue.textContent = msg.SPEED;
+  }
+
+  if (msg.type === "EVENT") {
+    eventValue.textContent = msg.items ? msg.items.join(" ") : trimmed;
+  }
+
+  if (msg.type === "ERROR") {
+    eventValue.textContent = trimmed;
+  }
+
+  if (msg.RANGE_CM) {
+    const n = Number(msg.RANGE_CM);
+    if (Number.isFinite(n) && n < 9000) {
+      rangeLcd.textContent = `${n} cm`;
+      rangeHistory.push(n);
+      if (rangeHistory.length > 100) rangeHistory.shift();
+      drawChart();
+    } else {
+      rangeLcd.textContent = "--- cm";
+    }
+  }
+}
+
+function drawChart() {
+  const w = chart.width;
+  const h = chart.height;
+
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#23394c";
+  for (let x = 0; x <= w; x += 50) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y += 30) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  if (rangeHistory.length < 2) return;
+
+  const maxCm = Math.max(100, ...rangeHistory);
+  const minCm = 0;
+
+  ctx.strokeStyle = "#72e09b";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  rangeHistory.forEach((v, i) => {
+    const x = (i / (rangeHistory.length - 1)) * w;
+    const y = h - ((v - minCm) / (maxCm - minCm)) * h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+
+  ctx.stroke();
+
+  ctx.fillStyle = "#a9bdd0";
+  ctx.font = "12px Consolas, monospace";
+  ctx.fillText(`0 cm`, 8, h - 8);
+  ctx.fillText(`${Math.round(maxCm)} cm`, 8, 14);
+}
+
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    alert("Web Bluetooth is not available in this browser. Use Chrome or Edge on a supported platform.");
+    return;
+  }
+
+  try {
+    log("Requesting BLE device...");
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [NUS_SERVICE]
+    });
+
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    log(`Connecting to ${device.name || "BLE device"}...`);
+    server = await device.gatt.connect();
+
+    const service = await server.getPrimaryService(NUS_SERVICE);
+    rxChar = await service.getCharacteristic(NUS_RX);
+    txChar = await service.getCharacteristic(NUS_TX);
+
+    await txChar.startNotifications();
+    txChar.addEventListener("characteristicvaluechanged", onNotify);
+
+    setConnectedState(true);
+    log("Connected. Sending HELLO.");
+    await sendCommand("HELLO");
+  } catch (err) {
+    log(`Connection error: ${err.message || err}`, "ERR ");
+    setConnectedState(false);
+  }
+}
+
+function onDisconnected() {
+  log("BLE disconnected.", "ERR ");
+  setConnectedState(false);
+  rxChar = null;
+  txChar = null;
+  server = null;
+}
+
+async function disconnectBle() {
+  try {
+    if (device && device.gatt && device.gatt.connected) {
+      device.gatt.disconnect();
+    }
+  } catch (err) {
+    log(`Disconnect error: ${err.message || err}`, "ERR ");
+  }
+  setConnectedState(false);
+}
+
+function onNotify(event) {
+  const value = event.target.value;
+  const chunk = decoder.decode(value);
+  rxTextBuffer += chunk;
+
+  let parts = rxTextBuffer.split(/\r?\n/);
+  rxTextBuffer = parts.pop();
+
+  for (const line of parts) {
+    processLine(line);
+  }
+}
+
+async function sendCommand(command) {
+  if (!connected || !rxChar) {
+    log("Not connected.", "ERR ");
+    return;
+  }
+
+  const clean = command.trim();
+  if (!clean) return;
+
+  const data = encoder.encode(clean + "\n");
+
+  try {
+    if (rxChar.writeValueWithoutResponse) {
+      await rxChar.writeValueWithoutResponse(data);
+    } else {
+      await rxChar.writeValue(data);
+    }
+    log(clean, "TX ");
+  } catch (err) {
+    log(`Write error: ${err.message || err}`, "ERR ");
+  }
+}
+
+connectBtn.addEventListener("click", connectBle);
+disconnectBtn.addEventListener("click", disconnectBle);
+clearBtn.addEventListener("click", () => { logEl.textContent = ""; });
+
+sendBtn.addEventListener("click", () => sendCommand(cmdInput.value));
+cmdInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendCommand(cmdInput.value);
+});
+
+document.querySelectorAll(".cmd").forEach(btn => {
+  btn.addEventListener("click", () => sendCommand(btn.dataset.cmd));
+});
+
+setConnectedState(false);
+drawChart();
+</script>
+</body>
+</html>
