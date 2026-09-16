@@ -1,0 +1,207 @@
+module 'MURL Safety Service' Output
+author 'Robot EDU / MURL Project'
+version 0 1
+choices murl_stopMode coast brake
+description 'MURL Safety Service v0.1.0.
+Enforces output revocation, profile limits, an application watchdog, recoverable faults, and a latched emergency stop.
+This educational software is not a certified safety system.
+SPDX-License-Identifier: MPL-2.0'
+variables _murl__safetyGeneration _murl__watchdogTripCount _murl__watchdogStopLatency _murl__lastStopMode
+
+  spec ' ' 'murl_set_speed_limit' 'set speed limit _ mm/s' 'num' 150
+  spec ' ' 'murl_set_accel_limit' 'set acceleration limit _ mm/s2' 'num' 400
+  spec ' ' 'murl_set_watchdog' 'set watchdog interval _ ms' 'num' 500
+  spec ' ' 'murl_feed_watchdog' 'feed robot watchdog'
+  spec 'r' 'murl_safety_state' 'robot safety state'
+  spec ' ' 'murl_stop_robot' 'stop robot _' 'menu.murl_stopMode' 'coast'
+  spec ' ' 'murl_safe_stop' 'safe stop robot'
+  spec ' ' 'murl_emergency_stop' 'emergency stop robot'
+  spec ' ' 'murl_clear_fault' 'clear recoverable robot fault'
+  spec ' ' 'murl_reset_estop' 'reset emergency stop'
+  spec 'r' 'murl_watchdog_trip_count' 'robot watchdog trip count'
+  spec 'r' 'murl_watchdog_stop_latency' 'last watchdog stop latency ms'
+  space
+  advanced
+  spec ' ' '_murl_arm_watchdog' '_murl arm watchdog'
+  spec ' ' '_murl_disarm_watchdog' '_murl disarm watchdog'
+  spec ' ' '_murl_safety_monitor' '_murl safety monitor'
+  spec ' ' '_murl_start_safety_service' '_murl start safety service'
+  spec ' ' '_murl_watchdog_trip' '_murl watchdog trip'
+
+to '_murl_arm_watchdog' {
+  _murl__watchdogLastFeed = (millisOp)
+  _murl__watchdogArmed = (booleanConstant true)
+}
+
+to '_murl_disarm_watchdog' {
+  _murl__watchdogArmed = (booleanConstant false)
+}
+
+to '_murl_safety_monitor' {
+  local 'generation' _murl__safetyGeneration
+  repeatUntil (generation != _murl__safetyGeneration) {
+    if (and _murl__ready _murl__watchdogArmed) {
+      if ((millisSince _murl__watchdogLastFeed (millisOp)) > _murl__watchdogInterval) {
+        '_murl_watchdog_trip'
+      }
+    }
+    waitMillis 20
+  }
+}
+
+to '_murl_start_safety_service' {
+  _murl__safetyGeneration += 1
+  _murl__watchdogTripCount = 0
+  _murl__watchdogStopLatency = 0
+  sendBroadcast '_murl_safety_monitor'
+}
+
+to '_murl_watchdog_trip' {
+  local 'detectedAt' (millisOp)
+  local 'finiteWasActive' (and _murl__motionActive (or (_murl__motionKind == 'distance') (_murl__motionKind == 'turn')))
+  adapter_emergency_stop
+  _murl__watchdogStopLatency = (millisSince detectedAt (millisOp))
+  _murl__watchdogTripCount += 1
+  _murl__faultLatched = (booleanConstant true)
+  '_murl_disarm_watchdog'
+  '_murl_motion_values_reset'
+  '_murl_set_state' 'FAULT'
+  '_murl_error' 40 'robot watchdog expired; outputs cleared'
+  if finiteWasActive {
+    _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+    '_murl_evidence_motion_completed'
+  }
+  sendBroadcast 'murl.fault'
+}
+
+to murl_clear_fault {
+  if _murl__estopLatched {
+    '_murl_error' 50 'reset emergency stop before clearing faults'
+    return
+  }
+  adapter_emergency_stop
+  _murl__faultLatched = (booleanConstant false)
+  '_murl_motion_values_reset'
+  '_murl_set_state' 'IDLE'
+  '_murl_clear_error'
+}
+
+to murl_emergency_stop {
+  local 'finiteWasActive' (and _murl__motionActive (or (_murl__motionKind == 'distance') (_murl__motionKind == 'turn')))
+  adapter_emergency_stop
+  _murl__estopLatched = (booleanConstant true)
+  _murl__faultLatched = (booleanConstant false)
+  '_murl_disarm_watchdog'
+  '_murl_motion_values_reset'
+  '_murl_set_state' 'E_STOP'
+  '_murl_error' 50 'emergency stop latched; explicit reset required'
+  if finiteWasActive {
+    _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+    '_murl_evidence_motion_completed'
+  }
+  sendBroadcast 'murl.estop'
+}
+
+to murl_feed_watchdog {
+  if (not ('_murl_require_ready')) {return}
+  _murl__watchdogLastFeed = (millisOp)
+}
+
+to murl_reset_estop {
+  adapter_emergency_stop
+  if (not _murl__estopLatched) {
+    '_murl_error' 11 'emergency stop is not latched'
+    return
+  }
+  _murl__estopLatched = (booleanConstant false)
+  _murl__faultLatched = (booleanConstant false)
+  '_murl_motion_values_reset'
+  '_murl_set_state' 'IDLE'
+  '_murl_clear_error'
+}
+
+to murl_safe_stop {
+  adapter_emergency_stop
+  '_murl_disarm_watchdog'
+  local 'wasMoving' _murl__motionActive
+  local 'finiteWasActive' (and wasMoving (or (_murl__motionKind == 'distance') (_murl__motionKind == 'turn')))
+  '_murl_motion_values_reset'
+  if (and _murl__ready (not _murl__estopLatched)) {'_murl_set_state' 'IDLE'}
+  if finiteWasActive {
+    _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+    '_murl_evidence_motion_completed'
+  }
+  if wasMoving {sendBroadcast 'murl.motion.cancelled'}
+}
+
+to murl_safety_state {
+  return _murl__state
+}
+
+to murl_set_accel_limit requestedLimit {
+  if (not ('_murl_require_ready')) {return}
+  if (requestedLimit <= 0) {
+    '_murl_error' 11 'acceleration limit must be greater than zero'
+    return
+  }
+  _murl__accelLimit = (minimum requestedLimit _murl__profileMaxAccel)
+  '_murl_clear_error'
+}
+
+to murl_set_speed_limit requestedLimit {
+  if (not ('_murl_require_ready')) {return}
+  if (requestedLimit <= 0) {
+    '_murl_error' 11 'speed limit must be greater than zero'
+    return
+  }
+  _murl__speedLimit = (minimum requestedLimit _murl__profileMaxSpeed)
+  '_murl_clear_error'
+}
+
+to murl_set_watchdog requestedInterval {
+  if (not ('_murl_require_ready')) {return}
+  if (requestedInterval == 0) {
+    _murl__watchdogInterval = 100
+    _murl__statusCode = 0
+    _murl__lastError = 'warning: watchdog zero clamped to 100 ms safety floor'
+    return
+  }
+  if (or (requestedInterval < 100) (requestedInterval > 5000)) {
+    '_murl_error' 11 'watchdog interval must be 100 to 5000 ms'
+    return
+  }
+  _murl__watchdogInterval = requestedInterval
+  _murl__watchdogLastFeed = (millisOp)
+  '_murl_clear_error'
+}
+
+to murl_stop_robot mode {
+  if (not _murl__profileSelected) {return}
+  local 'stopStatus' (adapter_stop mode)
+  '_murl_disarm_watchdog'
+  local 'wasMoving' _murl__motionActive
+  local 'finiteWasActive' (and wasMoving (or (_murl__motionKind == 'distance') (_murl__motionKind == 'turn')))
+  '_murl_motion_values_reset'
+  if (and _murl__ready (not _murl__estopLatched)) {'_murl_set_state' 'IDLE'}
+  _murl__lastStopMode = mode
+  if (stopStatus == 10) {
+    _murl__statusCode = 0
+    _murl__lastError = 'warning: brake unavailable; stopped by coast'
+  } else {
+    '_murl_clear_error'
+  }
+  if finiteWasActive {
+    _murl__lastMotionDuration = (millisSince _murl__finiteStartMS (millisOp))
+    '_murl_evidence_motion_completed'
+  }
+  if wasMoving {sendBroadcast 'murl.motion.cancelled'}
+}
+
+to murl_watchdog_stop_latency {
+  return _murl__watchdogStopLatency
+}
+
+to murl_watchdog_trip_count {
+  return _murl__watchdogTripCount
+}
+
