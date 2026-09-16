@@ -1,0 +1,91 @@
+module main
+author 'Robot EDU / MURL Project'
+version 0 1
+description 'Interactive MURL Robot Passport v0.1.0 for Cutebot Pro. Startup initializes with outputs off. Every motion test requires an explicit click on its My Blocks command.'
+
+  spec ' ' 'passport_initialize' 'P0/P1 initialize Cutebot Pro safely'
+  spec ' ' 'passport_enable_candidates' 'enable commissioning candidates'
+  spec ' ' 'passport_lifted_wheels' 'P2-P4 lifted-wheels pulse'
+  spec ' ' 'passport_distance_once' 'P5 distance 1000 mm once'
+  spec ' ' 'passport_turn_once' 'P6 turn _ cdeg once' 'num' 18000
+  spec ' ' 'passport_sensors' 'P7 report advertised sensors'
+  spec ' ' 'passport_watchdog' 'P8 watchdog interruption test'
+  spec ' ' 'passport_persistence_check' 'P9 reinitialize outputs-off check'
+  spec ' ' 'passport_finish' 'P10 finish and show evidence'
+
+to passport_distance_once {
+  if (not (murl_has_capability 'motion.distance')) {sayIt 'SKIP P5: motion.distance unavailable'; return}
+  murl_move 1000 150
+  sayIt 'P5 measured/error' _murl__lastMotionMeasured _murl__lastMotionError
+}
+
+to passport_enable_candidates {
+  murl_enable_cutebot_candidates
+  sayIt 'qualification' (murl_profile_qualification) 'capabilities' _murl__capabilities
+}
+
+to passport_finish {
+  murl_safe_stop
+  if (murl_trial_active) {murl_end_trial}
+  sayIt (murl_trial_report)
+}
+
+to passport_initialize {
+  murl_use_profile 'cutebot-pro'
+  murl_initialize
+  if (murl_ready) {
+    murl_set_trial_context 'SET-UTC-TIMESTAMP' 'SET-TEST-SURFACE' 'SET-PAYLOAD' 'Interactive physical Passport'
+    murl_begin_trial 'robot-passport-cutebot-pro'
+    sayIt 'P0 identity' (murl_robot_name) (murl_profile_version) (murl_api_version)
+    sayIt 'P1 state' (murl_safety_state) 'qualification' (murl_profile_qualification)
+  } else {
+    sayIt (murl_last_error)
+  }
+}
+
+to passport_lifted_wheels {
+  comment 'DANGER: put robot on a stable stand with both wheels clear before clicking.'
+  if (not (murl_ready)) {sayIt 'initialize first'; return}
+  murl_set_wheel_effort 120 120
+  waitMillis 300
+  murl_feed_watchdog
+  murl_safe_stop
+  sayIt 'P2-P4 encoder ticks or sentinel' (murl_wheel_encoder 'left') (murl_wheel_encoder 'right')
+}
+
+to passport_persistence_check {
+  comment 'Outputs are cleared before re-selection. This checks runtime reload only; power-cycle separately for full P9.'
+  murl_safe_stop
+  murl_use_profile 'cutebot-pro'
+  murl_initialize
+  sayIt 'P9 state/profile' (murl_safety_state) (murl_profile_version)
+}
+
+to passport_sensors {
+  if (murl_has_capability 'sensor.range.front') {sayIt 'front range mm' (murl_range 'front')}
+  if (murl_has_capability 'sensor.line') {sayIt 'line L/C/R' (murl_line 'left') (murl_line 'centre') (murl_line 'right')}
+  if (murl_has_capability 'power.voltage') {sayIt 'battery mV' (murl_battery_voltage)}
+}
+
+to passport_turn_once angle {
+  if (not (murl_has_capability 'motion.turn')) {sayIt 'SKIP P6: motion.turn unavailable'; return}
+  murl_turn angle 4500
+  sayIt 'P6 measured/error' _murl__lastMotionMeasured _murl__lastMotionError
+}
+
+to passport_watchdog {
+  comment 'DANGER: use clear floor or lifted wheels. Motion should stop after heartbeat expires.'
+  murl_set_watchdog 500
+  murl_drive_effort 120
+  waitMillis 800
+  sayIt 'P8 status/latency' (murl_status_code) (murl_watchdog_stop_latency)
+  murl_clear_fault
+}
+
+script 50 50 {
+whenStarted
+comment 'Safe startup only. Motion tests are manual My Blocks commands.'
+passport_initialize
+sayIt 'Robot Passport ready. Read SAFETY.md, enable candidates, then click one test at a time.'
+}
+
